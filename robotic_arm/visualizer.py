@@ -87,12 +87,11 @@ class ArmVisualizerApp:
         self._ax.set_zlim(0, 400)
         self._current_point = None
         self._target_point = None
-        self._draw_points((0, 0, 0), (0, 0, 0))
 
         canvas = FigureCanvasTkAgg(figure, master=plot_frame)
-        canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
         self._canvas = canvas
+        self._draw_points((0, 0, 0), (0, 0, 0))
 
     def run(self) -> None:
         self._running = True
