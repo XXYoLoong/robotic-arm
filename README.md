@@ -34,6 +34,8 @@ FT232RL adapter before running the tool.
   other commands
 - Starts a background monitor that repeatedly reads **T06** so you can see live
   coordinates without knowing the initial pose
+- Waits up to 10 seconds for `G29` to acknowledge so a slow startup move does
+  not trigger a false "No response" error
 
 Use `--command "G30"` (or any other instruction such as `M02 F150`) to send a
 one-off command right after initialization. Press **Ctrl+C** to stop; if a
@@ -99,6 +101,7 @@ see options like `home` (G29), `origin` (G28), `coords` (T06), and `camera`
 - 按推荐顺序执行 T01 → T02 → T03 健康与身份查询
 - 下发 **G29**，在接受其他指令前让机械臂回到开机位置
 - 启动后台监听，循环读取 **T06**，无需知道初始姿态即可看到实时坐标
+- 针对 `G29` 等启动动作，最多等待 10 秒回应，避免因动作耗时导致的“无响应”报错
 
 使用 `--command "G30"`（或其他如 `M02 F150` 的指令）可在初始化后立即发送
 一次性命令。按 **Ctrl+C** 退出；若通信中断，请重置控制器硬件并重新运行。

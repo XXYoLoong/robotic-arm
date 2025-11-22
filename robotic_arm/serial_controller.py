@@ -88,8 +88,14 @@ class RoboticArmController:
             self._serial.close()
             _LOGGER.info("Serial port %s closed", self.port)
 
-    def send_command(self, command: str) -> str:
-        """Send a single-line command and return the response line."""
+    def send_command(self, command: str, *, response_timeout: Optional[float] = None) -> str:
+        """Send a single-line command and return the response line.
+
+        Some motions (e.g., ``G29`` startup) may take longer than the
+        default serial timeout to acknowledge. ``response_timeout`` allows
+        callers to override the wait window for a single command while
+        continuing to poll the port until a non-empty line arrives.
+        """
 
         if not self._serial or not self._serial.is_open:
             raise RuntimeError("Serial port is not open; call connect() first.")
@@ -99,11 +105,17 @@ class RoboticArmController:
         _LOGGER.debug("--> %s", command.strip())
         self._serial.write(command.encode("ascii"))
         self._serial.flush()
-        response = self._serial.readline().decode("ascii", errors="ignore").strip()
-        _LOGGER.debug("<-- %s", response)
-        if response == "":
-            raise RuntimeError("No response received from robotic arm.")
-        return response
+
+        deadline = time.time() + (response_timeout or self.read_timeout)
+        response = ""
+        while time.time() < deadline:
+            response = self._serial.readline().decode("ascii", errors="ignore").strip()
+            if response:
+                _LOGGER.debug("<-- %s", response)
+                return response
+            _LOGGER.debug("<-- (no data yet, waiting for response)")
+
+        raise RuntimeError("No response received from robotic arm.")
 
     def initialize(self) -> ArmStatus:
         """Run the startup sequence and return the populated status."""
@@ -136,7 +148,7 @@ class RoboticArmController:
         self.status.firmware_version = response.removeprefix("T03 ")
 
     def _move_to_startup_position(self) -> None:
-        response = self.send_command("G29")
+        response = self.send_command("G29", response_timeout=10.0)
         if response != "OK":
             raise RuntimeError(f"Startup (G29) failed: {response}")
         _LOGGER.info("Robot moved to startup position via G29")

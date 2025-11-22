@@ -30,11 +30,12 @@ class ArmVisualizerApp:
         self._status_label = tk.Label(self.root, text="Connecting…", anchor="w")
         self._status_label.pack(fill="x", padx=8, pady=(8, 4))
 
-        self._build_controls()
-        self._build_plot()
-
+        # Text variables must be created before building the controls that reference them
         self._status_text = tk.StringVar(value="Idle")
         self._response_text = tk.StringVar(value="")
+
+        self._build_controls()
+        self._build_plot()
 
     def _build_controls(self) -> None:
         controls = tk.Frame(self.root)
