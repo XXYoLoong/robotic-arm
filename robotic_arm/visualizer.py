@@ -22,6 +22,9 @@ class ArmVisualizerApp:
         self.controller = controller
         self.refresh_ms = refresh_ms
         self._running = False
+        self._target_pose: tuple[float, float, float] | None = None
+        self._last_pose: dict[str, float] | None = None
+        self._home_pose = _home_pose()
 
         self.root = tk.Tk()
         self.root.title("Robotic Arm Visualizer")
@@ -79,19 +82,14 @@ class ArmVisualizerApp:
 
         figure = Figure(figsize=(6, 6))
         self._ax = figure.add_subplot(111, projection="3d")
-        self._ax.set_xlabel("X")
-        self._ax.set_ylabel("Y")
-        self._ax.set_zlabel("Z")
-        self._ax.set_xlim(-300, 300)
-        self._ax.set_ylim(-300, 300)
-        self._ax.set_zlim(0, 400)
+        self._configure_axes()
         self._current_point = None
         self._target_point = None
 
         canvas = FigureCanvasTkAgg(figure, master=plot_frame)
         canvas.get_tk_widget().pack(fill="both", expand=True)
         self._canvas = canvas
-        self._draw_points((0, 0, 0), (0, 0, 0))
+        self._draw_points(self._home_pose, self._home_pose, {})
 
     def run(self) -> None:
         self._running = True
@@ -129,21 +127,60 @@ class ArmVisualizerApp:
         parsed = _parse_coordinate_line(coordinates)
         if not parsed:
             return
+        self._last_pose = parsed
         x, y, z = parsed.get("X", 0.0), parsed.get("Y", 0.0), parsed.get("Z", 0.0)
-        self._draw_points((x, y, z), self._read_target())
-        pretty = _format_pose(parsed)
+        target = self._target_pose or self._read_target()
+        self._draw_points((x, y, z), target, parsed)
+        pretty = _format_pose(parsed, target)
         self._status_text.set(pretty)
 
-    def _draw_points(self, current: tuple[float, float, float], target: tuple[float, float, float]) -> None:
-        self._ax.cla()
+    def _configure_axes(self) -> None:
         self._ax.set_xlabel("X")
         self._ax.set_ylabel("Y")
         self._ax.set_zlabel("Z")
-        self._ax.set_xlim(-300, 300)
-        self._ax.set_ylim(-300, 300)
-        self._ax.set_zlim(0, 400)
-        self._ax.scatter(*current, c="tab:blue", s=60, label="Current")
-        self._ax.scatter(*target, c="tab:orange", s=60, label="Target")
+        reach = _max_reach()
+        self._ax.set_xlim(-reach, reach)
+        self._ax.set_ylim(-reach, reach)
+        self._ax.set_zlim(0, reach * 1.1)
+        self._ax.view_init(elev=25, azim=45)
+        self._ax.grid(True)
+
+    def _draw_points(
+        self,
+        current: tuple[float, float, float],
+        target: tuple[float, float, float],
+        pose: dict[str, float],
+    ) -> None:
+        self._ax.cla()
+        self._configure_axes()
+
+        joints = _solve_simple_arm(current, pose)
+        xs, ys, zs = zip(*joints)
+        self._ax.plot(xs, ys, zs, "-o", c="tab:blue", label="Arm")
+        self._ax.scatter(*current, c="tab:blue", s=80)
+
+        self._ax.scatter(*target, c="tab:orange", s=80, label="Target")
+        self._ax.plot([current[0], target[0]], [current[1], target[1]], [current[2], target[2]], "k--", alpha=0.3)
+
+        # Reference: home pose along the vertical plane through the base
+        self._ax.scatter(*self._home_pose, c="gray", s=50, alpha=0.7, label="Home")
+        self._ax.plot([0, self._home_pose[0]], [0, self._home_pose[1]], [0, self._home_pose[2]], "gray", alpha=0.3)
+
+        orient_vec = _orientation_vector(pose)
+        end = current
+        self._ax.quiver(
+            end[0],
+            end[1],
+            end[2],
+            orient_vec[0],
+            orient_vec[1],
+            orient_vec[2],
+            length=60,
+            normalize=True,
+            color="tab:green",
+            label="Tool axis",
+        )
+
         self._ax.legend(loc="upper right")
         self._canvas.draw()
 
@@ -185,6 +222,14 @@ class ArmVisualizerApp:
             messagebox.showwarning("Invalid input", "Coordinates must be numeric.")
             return
 
+        target = (coords["X"], coords["Y"], coords["Z"])
+        if not _within_workspace(target):
+            messagebox.showwarning(
+                "Out of range",
+                "目标超出工作空间：以基座为中心，臂展在竖直平面的中心附近，请减小半径或高度后再试。",
+            )
+            return
+
         command = (
             f"{opcode} "
             f"X{coords['X']} Y{coords['Y']} Z{coords['Z']} "
@@ -193,9 +238,44 @@ class ArmVisualizerApp:
         try:
             response = self.controller.send_command(command)
             self._response_text.set(response)
-            self._draw_points(self._read_target(), self._read_target())
+            self._target_pose = (
+                coords["X"],
+                coords["Y"],
+                coords["Z"],
+            )
+            self._animate_preview()
         except Exception as exc:  # pylint: disable=broad-except
             self._response_text.set(f"Error: {exc}")
+
+    def _animate_preview(self) -> None:
+        if not self._target_pose:
+            return
+
+        start_pose = self._last_pose or {}
+        start = (
+            float(start_pose.get("X", 0.0)),
+            float(start_pose.get("Y", 0.0)),
+            float(start_pose.get("Z", 0.0)),
+        )
+        end = self._target_pose
+        steps = 15
+
+        def _step(idx: int) -> None:
+            if not self._running:
+                return
+            t = idx / steps
+            interp = (
+                start[0] + (end[0] - start[0]) * t,
+                start[1] + (end[1] - start[1]) * t,
+                start[2] + (end[2] - start[2]) * t,
+            )
+            pose = dict(start_pose)
+            pose.update({"X": interp[0], "Y": interp[1], "Z": interp[2]})
+            self._draw_points(interp, end, pose)
+            if idx < steps:
+                self.root.after(30, lambda: _step(idx + 1))
+
+        _step(0)
 
     def _on_close(self) -> None:
         self._running = False
@@ -221,12 +301,109 @@ def _parse_coordinate_line(text: str) -> dict[str, float]:
     return values
 
 
-def _format_pose(values: dict[str, float]) -> str:
+def _format_pose(values: dict[str, float], target: tuple[float, float, float] | None) -> str:
     pieces = []
     for key in ("X", "Y", "Z", "A", "B", "C"):
         if key in values:
             pieces.append(f"{key}={values[key]:.2f}")
+    if target:
+        pieces.append(f"Target=({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})")
     return "  ".join(pieces)
+
+
+def _orientation_vector(values: dict[str, float]) -> tuple[float, float, float]:
+    from math import cos, radians, sin
+
+    pitch = radians(values.get("B", 0.0))
+    yaw = radians(values.get("C", 0.0))
+
+    x = cos(pitch) * cos(yaw)
+    y = cos(pitch) * sin(yaw)
+    z = -sin(pitch)
+    return x, y, z
+
+
+def _solve_simple_arm(
+    end_effector: tuple[float, float, float], values: dict[str, float]
+) -> list[tuple[float, float, float]]:
+    from math import atan2, cos, radians, sin, sqrt
+
+    base = (0.0, 0.0, 0.0)
+
+    l1, l2, l3 = _link_lengths()
+
+    x, y, z = end_effector
+    yaw = radians(values.get("C", 0.0))
+
+    planar_dist = sqrt(x * x + y * y)
+    total_dist = sqrt(planar_dist * planar_dist + z * z)
+    if total_dist < 1e-6:
+        return [base, base, base, base]
+
+    reachable = min(total_dist - l3, l1 + l2 - 1e-3)
+    if reachable < 0:
+        reachable = 0.0
+    scale = reachable / total_dist
+    wrist_r = planar_dist * scale
+    wrist_z = z * scale
+
+    dist_to_wrist = sqrt(wrist_r * wrist_r + wrist_z * wrist_z)
+    dist_clamped = min(max(dist_to_wrist, abs(l1 - l2) + 1e-3), l1 + l2 - 1e-3)
+
+    cos_angle_elbow = (l1 * l1 + l2 * l2 - dist_clamped * dist_clamped) / (2 * l1 * l2)
+    cos_angle_elbow = max(min(cos_angle_elbow, 1.0), -1.0)
+    elbow_angle = atan2(sqrt(1 - cos_angle_elbow * cos_angle_elbow), cos_angle_elbow)
+
+    cos_angle_shoulder = (l1 * l1 + dist_clamped * dist_clamped - l2 * l2) / (2 * l1 * dist_clamped)
+    cos_angle_shoulder = max(min(cos_angle_shoulder, 1.0), -1.0)
+    shoulder_angle = atan2(wrist_z, wrist_r) + atan2(
+        sqrt(1 - cos_angle_shoulder * cos_angle_shoulder), cos_angle_shoulder
+    )
+
+    shoulder_r = l1 * cos(shoulder_angle)
+    shoulder_z = l1 * sin(shoulder_angle)
+
+    elbow_r = shoulder_r + l2 * cos(shoulder_angle - elbow_angle)
+    elbow_z = shoulder_z + l2 * sin(shoulder_angle - elbow_angle)
+
+    sin_yaw, cos_yaw = sin(yaw), cos(yaw)
+
+    shoulder = (shoulder_r * cos_yaw, shoulder_r * sin_yaw, shoulder_z)
+    elbow = (elbow_r * cos_yaw, elbow_r * sin_yaw, elbow_z)
+    wrist = (x - l3 * cos_yaw, y - l3 * sin_yaw, z)
+
+    return [base, shoulder, elbow, wrist]
+
+
+def _link_lengths() -> tuple[float, float, float]:
+    """Nominal link lengths (mm) measured from the home pose."""
+
+    return 140.0, 140.0, 100.0
+
+
+def _home_pose() -> tuple[float, float, float]:
+    """Return the startup position derived from the vertical 90° posture."""
+
+    l1, l2, l3 = _link_lengths()
+    return 0.0, 0.0, l1 + l2 + l3
+
+
+def _max_reach() -> float:
+    """Max reach from base to tool center in any direction (mm)."""
+
+    return sum(_link_lengths())
+
+
+def _within_workspace(point: tuple[float, float, float]) -> bool:
+    """Rough workspace guard to avoid sending impossible targets."""
+
+    from math import sqrt
+
+    reach = _max_reach()
+    x, y, z = point
+    radial = sqrt(x * x + y * y)
+    dist = sqrt(radial * radial + z * z)
+    return 0 <= z <= reach and dist <= reach
 
 
 def parse_arguments(argv: Iterable[str]) -> argparse.Namespace:

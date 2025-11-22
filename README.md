@@ -54,9 +54,15 @@ python -m robotic_arm.visualizer COM15 --interval 0.5
 - The left panel lets you enter X/Y/Z and orientation (A/B/C) targets and issue
   `G00` (rapid), `G01` (linear), `G30` (camera pose), or manual `T06` refreshes
   for troubleshooting.
-- The right panel shows the current pose (blue) and the target you entered
-  (orange). Coordinates auto-refresh using `T06` at the selected interval so you
-  can see how the arm moves toward new commands.
+- The right panel renders a simple 3-link arm model driven by the live
+  coordinates (blue) and your target (orange). The tool-axis vector is drawn in
+  green, and an animated preview runs as soon as you send a command so you can
+  see the intended path while the real hardware is moving.
+- The model and limits assume the boot pose is fully vertical: each of the
+  three links stands 90° to its neighbor on the central vertical plane. The
+  plotted home marker (gray) is the base-aligned frame origin, and the GUI will
+  refuse targets that exceed the arm’s nominal reach to avoid accidental
+  overshoot.
 
 ### Windows example (COM15)
 
@@ -117,8 +123,13 @@ python -m robotic_arm.visualizer COM15 --interval 0.5
 
 - 左侧面板可输入 X/Y/Z 与姿态（A/B/C）目标，并发送 `G00`（快速）、`G01`
   （直线）、`G30`（相机位）、或手动刷新 `T06` 进行排查。
-- 右侧面板显示当前姿态（蓝色）与输入的目标（橙色）。坐标会按设定的
-  间隔自动通过 `T06` 刷新，便于观察机械臂向目标运动的过程。
+- 右侧面板以三节连杆的简化模型呈现实时姿态（蓝色）与输入的目标
+  （橙色），绿色箭头表示末端工具轴。发送命令后会立即播放预览动画，
+  在硬件动作的同时看到预期的路径，坐标也会按设定间隔经 `T06` 自动
+  刷新。
+- 模型与限制基于开机复位姿态：大臂、中臂、小臂均在基座竖直平面内且互
+  成 90°。灰色的 Home 标记即基座对齐的坐标系原点。若输入的目标超出
+  名义臂展，GUI 会直接拦截，避免任意移动导致出界。
 
 ### Windows 示例（COM15）
 
