@@ -57,6 +57,7 @@ class RoboticArmController:
         self._serial: Optional[serial.Serial] = None
         self._monitor_thread: Optional[threading.Thread] = None
         self._monitor_stop = threading.Event()
+        self._serial_lock = threading.Lock()
         self.status = ArmStatus()
 
     def connect(self) -> None:
@@ -84,9 +85,10 @@ class RoboticArmController:
         self._monitor_stop.set()
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout=2)
-        if self._serial and self._serial.is_open:
-            self._serial.close()
-            _LOGGER.info("Serial port %s closed", self.port)
+        with self._serial_lock:
+            if self._serial and self._serial.is_open:
+                self._serial.close()
+                _LOGGER.info("Serial port %s closed", self.port)
 
     def send_command(self, command: str) -> str:
         """Send a single-line command and return the response line."""
@@ -94,16 +96,17 @@ class RoboticArmController:
         if not self._serial or not self._serial.is_open:
             raise RuntimeError("Serial port is not open; call connect() first.")
 
-        if not command.endswith("\n"):
-            command += "\n"
-        _LOGGER.debug("--> %s", command.strip())
-        self._serial.write(command.encode("ascii"))
-        self._serial.flush()
-        response = self._serial.readline().decode("ascii", errors="ignore").strip()
-        _LOGGER.debug("<-- %s", response)
-        if response == "":
-            raise RuntimeError("No response received from robotic arm.")
-        return response
+        with self._serial_lock:
+            if not command.endswith("\n"):
+                command += "\n"
+            _LOGGER.debug("--> %s", command.strip())
+            self._serial.write(command.encode("ascii"))
+            self._serial.flush()
+            response = self._serial.readline().decode("ascii", errors="ignore").strip()
+            _LOGGER.debug("<-- %s", response)
+            if response == "":
+                raise RuntimeError("No response received from robotic arm.")
+            return response
 
     def initialize(self) -> ArmStatus:
         """Run the startup sequence and return the populated status."""
